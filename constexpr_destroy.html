@@ -11,10 +11,10 @@
 
 <body>
         <p>
-        Document number: P????R0<br>
-        Project: Programming Language C++, Library Evolution Working Group<br><br>
-        &lt;<a href="mailto:gerard.s.stone@gmail.com">gerard.s.stone@gmail.com</a>&gt;<br><br>
-        Date: 2016-08-03<br>
+        Document number: DXXXX<br>
+        Date: 2016-08-05<br>
+        Reply-to: Ildus Nezametdinov &lt;<a href="mailto:gerard.s.stone@gmail.com">gerard.s.stone@gmail.com</a>&gt;<br>
+        Audience: LEWG, SG14
         </p>
 
         <h1>A Proposal to Add Constexpr Modifiers to destroy(_at|_n) algorithms</h1>
@@ -59,7 +59,7 @@
 
         <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> has been approved for C++17. It provides algorithms for destroying
         objects at given location or range, but these algorithms are not marked as constexpr.
-        This document proposes adding constexpr specifiers to the following function templates: <code>destroy, destroy_at</code>. Doing so will reduce boilerplate
+        This document proposes adding constexpr specifiers to the following function templates: <code>destroy, destroy_n, destroy_at</code>. Doing so will reduce boilerplate
         code:
         <code><pre>
                 template &lt;typename T&gt;
@@ -102,8 +102,8 @@
 
         <h2>III. Design Decisions</h2>
         <p>
-        Algorithms from <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">p0040</a> must remain the same, but become usable in constant expressions whenever
-        value_type of the iterator is permitted to appear in constant expression.
+        Algorithms from <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> must remain the same, but become usable in constant expressions whenever
+        value_type of the iterator (for <code>destroy</code> and <code>destroy_n</code>) or T (for <code>destroy_at</code>) is permitted to appear in constant expression.
         </p>
 
         <h2>IV. Proposed modifications for P0040R3</h2>
@@ -129,7 +129,7 @@ template &lt;class ForwardIterator, class Size&gt;
  <ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);
         </pre></code>
 
-        <h3>20.9.12.4 destroy</h3>
+        <h3>Modifications to 20.9.12.4 destroy</h3>
 <pre>
 <code>template &lt;class T&gt;
 <ins>constexpr </ins>void destroy_at(T* location);</code>
@@ -148,7 +148,7 @@ template &lt;class ForwardIterator&gt;
 <code>template &lt;class ForwardIterator, class Size&gt;
 <ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);</code>
     <i>Effects:</i> equivalent to:<code>
-            for ( ; n > 0; (void)++first, --n)
+            for ( ; n &gt; 0; (void)++first, --n)
                   destroy_at(addressof(*first));
             return first;
 </code>
@@ -157,17 +157,10 @@ template &lt;class ForwardIterator&gt;
 
 
                 <h2>V. Revision History</h2>
-                <p>Revision 1:</p>
+                <p>R0:</p>
                 <ul>
                         <li>
-                                Initial proposal
+                                Initial revision
                         </li>
                 </ul>
-
-
-                <h2>VI. References</h2>
-
-                <h2>VII. Acknowledgements</h2>
-
-
 </body></html>
