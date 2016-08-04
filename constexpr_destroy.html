@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+        <meta charset="utf-8">
+        <title>A Proposal to Add Constexpr Modifiers to destroy(_at|_n) algorithms</title>
+        <style type="text/css">
+                ins{ color:rgb(0,128,0);}
+                del{ color:rgb(128,0,0);}
+        </style>
+</head>
+
+<body>
+        <p>
+        Document number: P????R0<br>
+        Project: Programming Language C++, Library Evolution Working Group<br><br>
+        &lt;<a href="mailto:gerard.s.stone@gmail.com">gerard.s.stone@gmail.com</a>&gt;<br><br>
+        Date: 2016-08-03<br>
+        </p>
+
+        <h1>A Proposal to Add Constexpr Modifiers to destroy(_at|_n) algorithms</h1>
+
+        <h2>I. Introduction and Motivation</h2>
+        <p>
+        Rules in 5.20 forbid explicit invocation of destructor and pseudo-destructor call in constant expressions. Thus, the following class can never appear in constant expression for any template argument:
+        <code><pre>
+                template &lt;typename T&gt;
+                struct some_container
+                {
+                        ...
+
+                        constexpr void pop_back() noexcept
+                        {
+                                data()[--size_].~value_type();
+                        }
+
+                        ...
+                };
+        </pre>
+        </code>
+
+        <p>
+        With recent addition of "if constexpr" to the Standard, pop_back() in example above can be implemented as:
+        <code><pre>
+                template &lt;typename T&gt;
+                struct some_container
+                {
+                        ...
+
+                        constexpr void pop_back() noexcept
+                        {
+                                if constexpr(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                        data()[--size_].~value_type();
+                        }
+
+                        ...
+                };
+        </pre>
+        </code>
+
+        <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> has been approved for C++17. It provides algorithms for destroying
+        objects at given location or range, but these algorithms are not marked as constexpr.
+        This document proposes adding constexpr specifiers to the following function templates: <code>destroy, destroy_at</code>. Doing so will reduce boilerplate
+        code:
+        <code><pre>
+                template &lt;typename T&gt;
+                struct some_container
+                {
+                        ...
+
+                        constexpr void pop_back() noexcept
+                        {
+                                destroy_at(&amp;data()[--size_]);
+                        }
+
+                        // Another example:
+                        constexpr iterator erase(const_iterator first, const_iterator last) noexcept
+                        {
+                                // this:
+                                destroy(first, last);
+
+                                // instead of this:
+                                // if constexpr(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                // {
+                                //         for(auto&amp; x : *this)
+                                //                 x.~value_type();
+                                // }
+
+                                ...
+                                return next;
+                        }
+
+                        ...
+                };
+        </pre>
+        </code>
+        </p>
+
+        <h2>II. Impact on the Standard</h2>
+        <p>This proposal is a pure library extension. It proposes changes to existing header <code>&lt;memory&gt;</code> such that the changes do not break existing code
+           and do not degrade performance. It does not require any changes in the core language, and it can been implemented in C++17.
+        </p>
+
+        <h2>III. Design Decisions</h2>
+        <p>
+        Algorithms from <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">p0040</a> must remain the same, but become usable in constant expressions whenever
+        value_type of the iterator is permitted to appear in constant expression.
+        </p>
+
+        <h2>IV. Proposed modifications for P0040R3</h2>
+        <p>All the additions to the document are marked with <ins>underlined green</ins>.</p>
+        <h3>Modifications to 20.9.2 Header &lt;memory&gt; synopsis [memory.syn]</h3>
+
+        <code><pre>
+template &lt;class T&gt;
+ <ins>constexpr </ins>void destroy_at(T* location);
+
+template &lt;class ExecutionPolicy, class ForwardIterator&gt;
+ void destroy(ExecutionPolicy&amp;&amp; exec, //see [algorithms.parallel.overloads]
+              ForwardIterator first, ForwardIterator last);
+
+template &lt;class ForwardIterator&gt;
+ <ins>constexpr </ins>void destroy(ForwardIterator first, ForwardIterator last);
+
+template &lt;class ExecutionPolicy, class ForwardIterator, class Size&gt;
+ ForwardIterator destroy_n(ExecutionPolicy&amp;&amp; exec,//see [algorithms.parallel.overloads]
+                           ForwardIterator first, Size n);
+
+template &lt;class ForwardIterator, class Size&gt;
+ <ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);
+        </pre></code>
+
+        <h3>20.9.12.4 destroy</h3>
+<pre>
+<code>template &lt;class T&gt;
+<ins>constexpr </ins>void destroy_at(T* location);</code>
+    <i>Effects:</i> equivalent to:<code>
+            <ins>if constexpr(!is_trivially_destructible_v&lt;T&gt;)</ins>
+                    location-&gt;~T();</code>
+
+<code>
+template &lt;class ForwardIterator&gt;
+<ins>constexpr </ins>void destroy(ForwardIterator first, ForwardIterator last);</code>
+    <i>Effects:</i> equivalent to:<code>
+            for(; first!=last; ++first)
+                destroy_at(addressof(*first));
+</code>
+
+<code>template &lt;class ForwardIterator, class Size&gt;
+<ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);</code>
+    <i>Effects:</i> equivalent to:<code>
+            for ( ; n > 0; (void)++first, --n)
+                  destroy_at(addressof(*first));
+            return first;
+</code>
+
+</pre>
+
+
+                <h2>V. Revision History</h2>
+                <p>Revision 1:</p>
+                <ul>
+                        <li>
+                                Initial proposal
+                        </li>
+                </ul>
+
+
+                <h2>VI. References</h2>
+
+                <h2>VII. Acknowledgements</h2>
+
+
+</body></html>
