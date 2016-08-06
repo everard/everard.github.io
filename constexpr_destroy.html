@@ -20,8 +20,12 @@
         <h1>A Proposal to Add Constexpr Modifiers to destroy(_at|_n) algorithms</h1>
 
         <h2>I. Introduction and Motivation</h2>
+
         <p>
-        Rules in 5.20 forbid explicit invocation of destructor and pseudo-destructor call in constant expressions. Thus, the following class can never appear in constant expression for any template argument:
+        Rules in 5.20 forbid evaluation in constant of the following expressions (among many others): invocation of function (other than constexpr constructor for
+        a literal class, a constexpr function, or an <i>implicit</i> invocation of a trivial destructor), and pseudo-destructor call.
+        According to rules from 7.1.5, the member function pop_back() of the following class can never appear in constant expression for any template parameter T,
+        even if some_container itself is a literal type, because evaluation of pop_back() results in evaluation of explicit destructor call (or pseudo-destructor call if T is scalar type):
         <code><pre>
                 template &lt;typename T&gt;
                 struct some_container
@@ -37,9 +41,20 @@
                 };
         </pre>
         </code>
+        </p>
 
         <p>
-        With recent addition of "if constexpr" to the Standard, pop_back() in example above can be implemented as:
+        Instantiation if some_container for any type T should in fact generate compiler error since, according to rules from 7.1.5/5:
+        <blockquote>
+For a constexpr function or constexpr constructor that is neither defaulted nor a template, if no argument
+values exist such that an invocation of the function or constructor could be an evaluated subexpression of
+a core constant expression (5.20), or, for a constructor, a constant initializer for some object (3.6.2), the
+program is ill-formed; no diagnostic required
+        </blockquote>
+        </p>
+
+        <p>
+        So the code above should be rewritten as:
         <code><pre>
                 template &lt;typename T&gt;
                 struct some_container
@@ -48,7 +63,7 @@
 
                         constexpr void pop_back() noexcept
                         {
-                                if constexpr(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                if(!std::is_trivially_destructible_v&lt;value_type&gt;)
                                         data()[--size_].~value_type();
                         }
 
@@ -56,11 +71,42 @@
                 };
         </pre>
         </code>
+        </p>
 
-        <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> has been approved for C++17. It provides algorithms for destroying
-        objects at given location or range, but these algorithms are not marked as constexpr.
-        This document proposes adding constexpr specifiers to the following function templates: <code>destroy, destroy_n, destroy_at</code>. Doing so will reduce boilerplate
-        code:
+        <p>
+        Now pop_back() can be used in constant expressions if both some_container and T are literal types. Let's consider another member function of
+        <code>some_container</code>:
+
+        <code><pre>
+                template &lt;typename T&gt;
+                struct some_container
+                {
+                        ...
+
+                        constexpr iterator erase(const_iterator first, const_iterator last) noexcept
+                        {
+                                ...
+                                if(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                {
+                                        for(auto&amp; x : *this)
+                                                x.~value_type();
+                                }
+
+                                ...
+                                return next;
+                        }
+
+                        ...
+                };
+        </pre>
+        </code>
+        </p>
+
+        <p>
+        The code above is really verbose. Luckily, <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> has been approved
+        for C++17. It provides algorithms for destroying objects at given location or range, but these algorithms are not marked as constexpr.
+        This document proposes adding constexpr specifiers to the following function templates: <code>destroy, destroy_n, destroy_at</code>. Doing so will
+        reduce boilerplate code:
         <code><pre>
                 template &lt;typename T&gt;
                 struct some_container
@@ -69,7 +115,12 @@
 
                         constexpr void pop_back() noexcept
                         {
-                                destroy_at(&amp;data()[--size_]);
+                                // this:
+                                destroy_at(addressof(data()[--size_]));
+
+                                // instead of this:
+                                // if(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                //         data()[--size_].~value_type();
                         }
 
                         // Another example:
@@ -79,7 +130,7 @@
                                 destroy(first, last);
 
                                 // instead of this:
-                                // if constexpr(!std::is_trivially_destructible_v&lt;value_type&gt;)
+                                // if(!std::is_trivially_destructible_v&lt;value_type&gt;)
                                 // {
                                 //         for(auto&amp; x : *this)
                                 //                 x.~value_type();
@@ -104,6 +155,27 @@
         <p>
         Algorithms from <a href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0040r3.html">P0040</a> must remain the same, but become usable in constant expressions whenever
         value_type of the iterator (for <code>destroy</code> and <code>destroy_n</code>) or T (for <code>destroy_at</code>) is permitted to appear in constant expression.
+
+        constexpr if has been approved for C++17, which is a preferred way to discard unneeded destructor call.
+        </p>
+
+        <p>
+        The proposed changes can be implemented in two ways:
+        <ul>
+        <li>adding constexpr if only inside destroy_at function template, or</li>
+        <li>adding constexpr if inside all function templates</li>
+        </ul>
+        </p>
+
+        <p>
+        The former is sufficient for all functions to become constexpr, but it gives no guarantees for <code>destroy</code> and <code>destroy_n</code> to
+        become no-op for trivially destructible types (even though compilers probably optimize them out anyway).
+        The latter gives strong guarantees that <code>destroy</code>, <code>destroy_at</code> and <code>destroy_n</code> are a no-op for trivially destructible types
+        since constexpr if does not instantiate discarded statements at all.</p>
+
+        <p>
+        There is a probability that parallel versions of these algorithms can also be constexpr, because constexpr if can be used to discard all the code for
+        trivially destructible types. The only question remaining here is whether ExecutionPolicy objects can be used in constexpr.
         </p>
 
         <h2>IV. Proposed modifications for P0040R3</h2>
@@ -129,7 +201,7 @@ template &lt;class ForwardIterator, class Size&gt;
  <ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);
         </pre></code>
 
-        <h3>Modifications to 20.9.12.4 destroy</h3>
+        <h3>Modifications to 20.9.12.4 destroy when constexpr if is added only to one algorithm (the first option)</h3>
 <pre>
 <code>template &lt;class T&gt;
 <ins>constexpr </ins>void destroy_at(T* location);</code>
@@ -142,17 +214,51 @@ template &lt;class ForwardIterator&gt;
 <ins>constexpr </ins>void destroy(ForwardIterator first, ForwardIterator last);</code>
     <i>Effects:</i> equivalent to:<code>
             for(; first!=last; ++first)
-                destroy_at(addressof(*first));
+                    destroy_at(addressof(*first));
 </code>
 
 <code>template &lt;class ForwardIterator, class Size&gt;
 <ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);</code>
     <i>Effects:</i> equivalent to:<code>
             for ( ; n &gt; 0; (void)++first, --n)
-                  destroy_at(addressof(*first));
+                    destroy_at(addressof(*first));
             return first;
 </code>
+</pre>
 
+        <h3>Modifications to 20.9.12.4 destroy when constexpr if is added to all algorithms (the second option)</h3>
+<pre>
+<code>template &lt;class T&gt;
+<ins>constexpr </ins>void destroy_at(T* location);</code>
+    <i>Effects:</i> equivalent to:<code>
+            <ins>if constexpr(!is_trivially_destructible_v&lt;T&gt;)</ins>
+                    location-&gt;~T();</code>
+
+<code>
+template &lt;class ForwardIterator&gt;
+<ins>constexpr </ins>void destroy(ForwardIterator first, ForwardIterator last);</code>
+    <i>Effects:</i> equivalent to:<code>
+            <ins>if constexpr(!is_trivially_destructible_v&lt;typename iterator_traits&lt;ForwardIterator&gt;::value_type&gt;)</ins>
+            <ins>{</ins>
+                    for(; first!=last; ++first)
+                            destroy_at(addressof(*first));
+            <ins>}</ins>
+</code>
+
+<code>template &lt;class ForwardIterator, class Size&gt;
+<ins>constexpr </ins>ForwardIterator destroy_n(ForwardIterator first, Size n);</code>
+    <i>Effects:</i> equivalent to:<code>
+            <ins>if constexpr(!is_trivially_destructible_v&lt;typename iterator_traits&lt;ForwardIterator&gt;::value_type&gt;)</ins>
+            <ins>{</ins>
+                    for ( ; n &gt; 0; (void)++first, --n)
+                            destroy_at(addressof(*first));
+            <ins>}</ins>
+            <ins>else</ins>
+            <ins>{</ins>
+            <ins>        advance(first, n);</ins>
+            <ins>}</ins>
+            return first;
+</code>
 </pre>
 
 
