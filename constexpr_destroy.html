@@ -22,7 +22,7 @@
         <h2>I. Introduction and Motivation</h2>
 
         <p>
-        Rules in 5.20 forbid evaluation in constant of the following expressions (among many others): invocation of function (other than constexpr constructor for
+        Rules in 5.20 forbid evaluation in constant expressions of the following expressions (among many others): invocation of function (other than constexpr constructor for
         a literal class, a constexpr function, or an <i>implicit</i> invocation of a trivial destructor), and pseudo-destructor call.
         According to rules from 7.1.5, the member function pop_back() of the following class can never appear in constant expression for any template parameter T,
         even if some_container itself is a literal type, because evaluation of pop_back() results in evaluation of explicit destructor call (or pseudo-destructor call if T is scalar type):
