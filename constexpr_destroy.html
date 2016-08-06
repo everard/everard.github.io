@@ -88,8 +88,8 @@ program is ill-formed; no diagnostic required
                                 ...
                                 if(!std::is_trivially_destructible_v&lt;value_type&gt;)
                                 {
-                                        for(auto&amp; x : *this)
-                                                x.~value_type();
+                                        for(auto i = first; i != last; ++i)
+                                                i-&gt;~value_type();
                                 }
 
                                 ...
@@ -132,8 +132,8 @@ program is ill-formed; no diagnostic required
                                 // instead of this:
                                 // if(!std::is_trivially_destructible_v&lt;value_type&gt;)
                                 // {
-                                //         for(auto&amp; x : *this)
-                                //                 x.~value_type();
+                                //         for(auto i = first; i != last; ++i)
+                                //                 i-&gt;~value_type();
                                 // }
 
                                 ...
