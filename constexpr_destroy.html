@@ -11,7 +11,7 @@
 
 <body>
         <p>
-        Document number: DXXXX<br>
+        Document number: D0427R0V0<br>
         Date: 2016-08-05<br>
         Reply-to: Ildus Nezametdinov &lt;<a href="mailto:gerard.s.stone@gmail.com">gerard.s.stone@gmail.com</a>&gt;<br>
         Audience: LEWG, SG14
@@ -44,7 +44,7 @@
         </p>
 
         <p>
-        Instantiation if some_container for any type T should in fact generate compiler error since, according to rules from 7.1.5/5:
+        Instantiation of <code>some_container</code> for any type T should in fact generate compiler error since, according to rules from 7.1.5/5:
         <blockquote>
 For a constexpr function or constexpr constructor that is neither defaulted nor a template, if no argument
 values exist such that an invocation of the function or constructor could be an evaluated subexpression of
@@ -74,7 +74,7 @@ program is ill-formed; no diagnostic required
         </p>
 
         <p>
-        Now pop_back() can be used in constant expressions if both some_container and T are literal types. Let's consider another member function of
+        Now pop_back() can be used in constant expressions if both <code>some_container</code> and T are literal types. Let's consider another member function of
         <code>some_container</code>:
 
         <code><pre>
@@ -116,7 +116,7 @@ program is ill-formed; no diagnostic required
                         constexpr void pop_back() noexcept
                         {
                                 // this:
-                                destroy_at(addressof(data()[--size_]));
+                                std::destroy_at(std::addressof(data()[--size_]));
 
                                 // instead of this:
                                 // if(!std::is_trivially_destructible_v&lt;value_type&gt;)
@@ -127,7 +127,7 @@ program is ill-formed; no diagnostic required
                         constexpr iterator erase(const_iterator first, const_iterator last) noexcept
                         {
                                 // this:
-                                destroy(first, last);
+                                std::destroy(first, last);
 
                                 // instead of this:
                                 // if(!std::is_trivially_destructible_v&lt;value_type&gt;)
