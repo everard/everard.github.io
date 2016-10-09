@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html>
+<head>
+        <meta charset="utf-8">
+        <title>Contiguous container</title>
+        <style type="text/css">
+                ins{ color:rgb(0,128,0);}
+                del{ color:rgb(128,0,0);}
+                var{ font-family: monospace; font-style: oblique;}
+                div#indent {padding-left: 50px;}
+        </style>
+</head>
+<body>
+
+<p>
+Document number: DXXXXR0V0<br>
+Date: 2016-10-09<br>
+Reply-to: Ildus Nezametdinov &lt;<a href="mailto:gerard.s.stone@gmail.com">gerard.s.stone@gmail.com</a>&gt;<br>
+Audience: LEWG, SG14
+</p>
+
+<h1>Contiguous container</h1>
+
+<h2>Introduction</h2>
+<p>
+Standard Library gives us ability to write high-performance code, but containers are actually under-specified, and most of the time it is a good thing, because user doesn't have to think too hard and implement everything from scratch.
+</p>
+<p>
+But in some areas like embedded development, programmer often needs to know and control exactly how much space his objects occupy, and how things work under-the-hood. He does optimizations, which are better suited for targeted hardware. With current standard containers it is possible, but limited to using different allocators, which is also not a bad thing. But still, when using allocators is not an option, user writes his own container from scratch, which might be time-consuming.
+</p>
+
+<p>This document proposes new library facility, which can be used to implement different classes of contiguous containers.</p>
+<p>Example 1: we need a bounded array (limited capacity, known at compile time), we write:</p>
+<pre><code>
+template &lt;typename T, std::size_t N&gt;
+struct uninitialized_memory_buffer
+{
+        using value_type = T;
+
+        ~uninitialized_memory_buffer()
+        {
+                if(!std::is_trivially_destructible&lt;T&gt;::value)
+                {
+                        for(std::size_t i = 0; i &lt; size_; ++i)
+                                begin()[i].~T();
+                }
+        }
+
+        T* begin() noexcept
+        {
+                return reinterpret_cast&lt;T*&gt;(storage_);
+        }
+
+        const T* begin() const noexcept
+        {
+                return reinterpret_cast&lt;const T*&gt;(storage_);
+        }
+
+        constexpr auto&amp; size() noexcept
+        {
+                return size_;
+        }
+
+        constexpr auto&amp; size() const noexcept
+        {
+                return size_;
+        }
+
+        constexpr auto capacity() const noexcept
+        {
+                return N;
+        }
+
+private:
+        alignas(T) unsigned char storage_[N * sizeof(T)];
+        std::size_t size_{};
+};
+
+template &lt;typename T, std::size_t N&gt;
+using bounded_array = std::contiguous_container&ltuninitialized_memory_buffer&lt;T, N&gt;&gt;;
+</code></pre>
+<p>Now bounded array has almost all functionality of std::vector.</p>
+<p>For another example, say, we want container like vector, but usable in constexpr context:</p>
+
+<pre><code>
+template &lt;typename T, std::size_t N&gt;
+struct literal_storage
+{
+        using value_type = T;
+
+        template &lt;typename... Args&gt;
+        constexpr void construct_at(T* location, Args&amp;&amp;... args)
+        {
+                *location = T{std::forward&lt;Args&gt;(args)...};
+        }
+
+        constexpr T* begin() noexcept
+        {
+                return storage_;
+        }
+
+        constexpr const T* begin() const noexcept
+        {
+                return storage_;
+        }
+
+        constexpr auto&amp; size() noexcept
+        {
+                return size_;
+        }
+
+        constexpr auto&amp; size() const noexcept
+        {
+                return size_;
+        }
+
+        constexpr auto capacity() const noexcept
+        {
+                return N;
+        }
+
+protected:
+        T storage_[N]{};
+        std::size_t size_{};
+};
+
+template &lt;typename T, std::size_t N&gt;
+using constexpr_vector = std::contiguous_container&ltliteral_storage&lt;T, N&gt;&gt;;
+
+constexpr int sum()
+{
+        constexpr_vector&lt;int, 16&gt; arr{};
+        arr.emplace_back(1);
+        arr.emplace_back(2);
+        arr.emplace_back(3);
+        arr.pop_back();
+        arr.push_back(4);
+
+        int a = 5;
+        arr.push_back(a);
+        arr.push_back(6);
+
+        int s = static_cast&lt;int&gt;(arr.size());
+        for(auto&amp; v : arr)
+                s += v;
+
+        return s;
+}
+static_assert(sum() == 23);
+</code></pre>
+<p>We can get a normal vector, small vector, etc. And each time user of this facility can reason about what he actually gets, because he specifies layout, he configures if his container might throw when out of capacity, etc.</p>
+<p>There are, of course, trade-offs. For example, user has to implement his own reserve() function in order to be able to increase capacity of his container; provide all constructors and destructor. But still use of this facility simplifies writing custom contiguous containers.</p>
+
+<h2>Design Decisions</h2>
+<p>
+In order for user to be able to specify layout of his container, contiguous_container must not define any non-static data members. Also this container must provide uniform behaviour across all implementations, so that user might be able to reason about what happens inside it and how to implement his own Storage base class for it. Any non-const static member definitions inside contiguous_container are also explicitly prohibited, so that user of this container might be sure that he doesn't get some hidden overhead. But still, user should expect same optimizations as for std::vector. Also functions, parametrized by InputInterators in other containers, here require ForwardIterators, so that user might expect same arguments for his reserve() functions.
+</p>
+
+<p>
+Let's don't forget about constexpr. This container should be usable in constexpr contexts when Storage class is designed appropriately.
+</p>
+
+<p>
+Also contiguous_container should not define some operations, so that more interesting things can be implemented. For example, small vector optimization is not possible for std::vector, but contiguous_container can be used to implement small vector, because swap() is user-defined. Of course, this container can also be used to implement allocator-aware container, according to the Standard.
+</p>
+
+<h2>Impact on the Standard</h2>
+<p>
+This proposal is a pure library extension. It proposes adding new header <var>&lt;contiguous_container&gt;</var>. Existing code shall not be broken, nothing changes in other headers. It does not require any changes in the core language, and it can be implemented in C++17.
+</p>
+
+<h2>Formal wording</h2>
+<h3>Change paragraph 23.2.1/15:</h3>
+<p>
+All of the containers defined in this Clause and in (21.3.1) except <var>array</var> <ins>and <var>contiguous_container</var></ins> meet the additional requirements of an allocator-aware container, as described in Table 83.
+</p>
+
+<p>
+Given an allocator type A and given a container type X having a value_type identical to T and an allocator_type identical to allocator_traits<A>::rebind_alloc<T> and given an lvalue m of type A, a pointer p of type T*, an expression v of type (possibly const) T, and an rvalue rv of type T, the following terms are defined. If X is not allocator-aware <ins>and not <var>contiguous_container</var></ins>, the terms below are defined as if A were std::allocator<T> — no allocator object needs to be created and user specializations of std::allocator<T> are not instantiated:
+</p>
+
+<h3>Add paragraph after 23.2.1/15</h3>
+<p>
+Given a type <var>S</var> which satisfies <em>Storage</em> requirements (23.3.y.1) and a type <var>X</var> identical to <var>contiguous_container&lt;S&gt;</var>, such that <var>S</var> having a <var>value_type</var> identical to <var>T</var> and given a value <var>s</var> of type <var>S</var>, pointer <var>p</var> of type <var>T*</var>, an expression <var>v</var> of type (possibly <var>const</var>) <var>T</var>, and an rvalue <var>rv</var> of type <var>T</var>, the following terms are defined:
+</p>
+
+<ul>
+<li>
+        <var>T</var> is <em><strong>DefaultInsertable</strong> into <var>X</var></em> means that the following expression is well-formed:
+        <div id="indent"><p><var>storage_traits&lt;S&gt;::construct_at(s, p)</var></p></div>
+</li>
+
+<li>
+        An element of <var>X</var> is <em>default-inserted</em> if it is initialized by evaluation of the expression
+        <div id="indent"><var><p>storage_traits&lt;S&gt;::construct_at(s, p)</var></p></div>
+        <p>where <var>p</var> is the address of the possibly uninitialized storage for the element allocated within <var>X</var>.</p>
+</li>
+
+<li>
+        <var>T</var> is <em><strong>MoveInsertable</strong> into <var>X</var></em> means that the following expression is well-formed:
+        <div id="indent"><var><p>storage_traits&lt;S&gt;::construct_at(s, p, rv)</p></var></div>
+        <p>
+        and its evaluation causes the following postcondition to hold: The value of <var>*p</var> is equivalent to the value of <var>rv</var> before the evaluation.<br> [ <em>Note:</em> <var>rv</var> remains a valid object. Its state is unspecified <em>-- end note</em> ]
+        </p>
+</li>
+
+<li>
+        <var>T</var> is <em><strong>CopyInsertable</strong> into <var>X</var></em> means that, in addition to <var>T</var> being <strong>MoveInsertable</strong> into <var>X</var>, the following expression is well-formed:
+        <div id="indent"><p><var>storage_traits&lt;S&gt;::construct_at(s, p, v)</var></p></div>
+        <p>and its evaluation causes the following postcondition to hold: The value of <var>v</var> is unchanged and is equivalent to <var>*p</var>.</p>
+</li>
+
+<li>
+        <var>T</var> is <em><strong>EmplaceConstructible</strong> into <var>X</var> from <var>args</var></em>, for zero or more arguments <var>args</var>, means that the following expression is well-formed:
+        <div id="indent"><p><var>storage_traits&lt;S&gt;::construct_at(s, p, args)</var></p></div>
+</li>
+
+<li>
+        <var>T</var> is <em><strong>Erasable</strong> from <var>X</var></em> means that the following expression is well-formed:
+        <div id="indent"><p><var>storage_traits&lt;S&gt;::destroy_at(s, p)</var></p></div>
+</li>
+</ul>
+
+<h3>Change 23.2.3, Table 84, Table 85</h3>
+<p>In Table 84:</p>
+<ul>
+        <li>in row with Expression <var>a.emplace(p, args);</var>, in the last column, "For vector and deque" replace with "For vector, <ins>contiguous_container</ins> and deque".</li>
+        <li>in row with Expression <var>a.insert(p,t)</var>, in the last column, "For vector and deque" replace with "For vector, <ins>contiguous_container</ins> and deque".</li>
+        <li>in row with Expression <var>a.insert(p,rv)</var>, in the last column, "For vector and deque" replace with "For vector, <ins>contiguous_container</ins> and deque".</li>
+        <li>in row with Expression <var>a.insert(p,i,j)</var>, in the last column, before "Each iterator in the range ..." add "<ins>For <var>contiguous_container</var>, <var>T</var> is also <var>MoveInsertable</var> into <var>X</var> and <var>MoveAssignable</var>.</ins>".</li>
+        <li>in rows with Expressions <var>a.erase(q)</var> and <var>a.erase(q1,q2)</var>, in the last column, "For vector and deque" replace with "For vector, <ins>contiguous_container</ins> and deque".</li>
+        <li>in row with Expression <var>a.assign(i,j)</var>, in the last column, before "For vector, if the..." add "<ins>For <var>contiguous_container</var>, interator shall meet the forward iterator requirements (24.2.5).</ins>".</li>
+        <li>in row with Expression <var>a.assign(n,t)</var>, in the last column, "For vector and deque" replace with "For vector, <ins>contiguous_container</ins> and deque".</li>
+</ul>
+
+<p>In Table 85, in column Container, <ins><var>contiguous_container</var></ins> should be added to each row where <var>vector</var> is mentioned.</p>
+
+<h3>Change 23.3.1</h3>
+The headers &lt;array&gt;, <ins>&lt;contiguous_container&gt;</ins>, &lt;deque&gt;, &lt;forward_list&gt;, &lt;list&gt;, and &lt;vector&gt; define class templates that meet the requirements for sequence containers.
+
+<h3>23.3.x Header &lt;contiguous_container&gt; synopsis</h3>
+<pre><code>
+#include &lt;initializer_list&gt;
+
+namespace std {
+  <em>// 23.3.y class template contiguous_container:</em>
+  template &lt;typename Storage&gt; struct storage_traits;
+  template &lt;typename Storage&gt; struct contiguous_container;
+  template &lt;typename Storage&gt;
+  constexpr bool operator==(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator!=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&lt;(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                           const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&gt;(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                           const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&lt;=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&gt;=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr void swap(contiguous_container&lt;Storage&gt;&amp; lhs,
+  contiguous_container&lt;Storage&gt;&amp; rhs) noexcept(noexcept(lhs.swap(rhs)));
+}
+</code></pre>
+
+<h3>23.3.y Class template contiguous_container</h3>
+<h4>23.3.y.1 Storage requirements</h4>
+<p>
+This container is parametrized by <var>Storage</var> template parameter. <var>Storage</var> must be a class-type object that incapsulates information about the layout and inner workings of <var>contiguous_container</var>. The class template <var>storage_traits</var> (23.3.y.2) supplies a uniform interface to all <var>Storage</var> types. Table Y1 describes the requirements on <var>Storage</var> types and thus on types used to instantiate <var>storage_traits</var>. A requirement is optional if the last column of Table Y1 specifies a default for a given expression. Within the standard library <var>storage_traits</var> template, an optional requirement that is not supplied by a <var>Storage</var> is replaced by the specified default expression. A user specialization of <var>storage_traits</var> may provide different defaults and may provide defaults for different requirements than the primary template.
+</p>
+
+<p>
+In the following Table <var>S</var> denotes a template parameter of <var>contiguous_container</var>, <var>X</var> denotes a type identical to <var>contiguous_container&lt;S&gt;</var>, <var>T</var> denotes a type identical to <var>value_type</var> of <var>S</var>, <var>s</var> denotes an object of type <var>S</var>, <var>p</var> denotes a value of type <var>T*</var>, <var>n</var> denotes value of type <var>std::size_t</var>, <var>Args</var> denotes a template parameter pack; <var>args</var> denotes a function parameter pack with the pattern <var>Args&amp;&amp;</var>.
+</p>
+
+<p>Table Y1 - <var>Storage</var> requirements</p>
+<p>
+<table border="1"><thead>
+<tr>
+<th>Expression</th>
+<th>Return type</th>
+<th>Operational semantics</th>
+<th>Assertion/note pre-/post-condition</th>
+<th>Complexity</th>
+<th>Default</th>
+</tr>
+</thead><tbody>
+<tr>
+<td><var>S::value_type</var></td>
+<td><var>T</var></td>
+<td></td>
+<td><em>Requires:</em> <var>T</var> is <strong>Erasable</strong> from <var>X</var> (see 23.2.1)</td>
+<td>compile time</td>
+<td></td>
+</tr>
+<tr>
+<td><var>S::no_exceptions</var></td>
+<td>Identical to or derived from <var>std::true_type</var> or <var>std::false_type</var></td>
+<td></td>
+<td></td>
+<td>compile time</td>
+<td><var>std::false_type</var></td>
+</tr>
+<tr>
+<td><var>s.construct_at(p, args)</var></td>
+<td>(not used)</td>
+<td>Constructs object of type <var>T</var> at <var>p</var></td>
+<td>If exception is thrown, then the second postcondition shall hold, and using <var>s.construct_at</var> on same <var>p</var> without prior call to <var>s.destroy_at(p)</var> shall be well-defined.<br>Post(1): location <var>p</var> contains object as if it was constructed from <var>args</var>.<br>Post(2): Value returned by <var>s.begin()</var>, <var>s.end()</var>, <var>s.max_size()</var>, <var>s.capacity()</var>, <var>static_cast&lt;std::size_t&gt;(s.size())</var>, <var>s.empty()</var>, <var>s.full()</var> are not changed.</td>
+<td></td>
+<td><var>::new (static_cast&lt;void*&gt;(p)) T{std::forward&lt;Args&gt;(args)...}</var></td>
+</tr>
+<tr>
+<td><var>s.destroy_at(p)</var></td>
+<td>(not used)</td>
+<td>Destroys object at <var>p</var> if <var>T</var> is not trivially destructible.</td>
+<td>May not throw any exceptions.<br>Post: Value returned by <var>s.begin()</var>, <var>s.end()</var>, <var>s.max_size()</var>, <var>s.capacity()</var>, <var>static_cast&lt;std::size_t&gt;(s.size())</var>, <var>s.empty()</var>, <var>s.full()</var> are not changed.</td>
+<td></td>
+<td><var>if constexpr(!std::is_trivially_destructible_v&lt;T&gt;) p-&gt;~T();</var></td>
+</tr>
+<tr>
+<td><var>s.begin()</var></td>
+<td><var>T*, const T*</var> for constant <var>s</var></td>
+<td>Returns a pointer <var>p</var> such that <var>[p, p + static_cast&lt;std::size_t&gt;(s.size()) )</var> is a valid range.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td></td>
+</tr>
+<tr>
+<td><var>s.end()</var></td>
+<td><var>T*, const T*</var> for constant <var>s</var></td>
+<td>Returns a pointer <var>p</var> such that<br> <var>p == ( s.begin() + static_cast&lt;std::size_t&gt;(s.size()) )</var>.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td><var>return s.begin() + static_cast&lt;std::size_t&gt;(s.size());</var></td>
+</tr>
+<tr>
+<td><var>s.reserve(n)</var></td>
+<td><var>bool</var></td>
+<td>Increases capacity of the storage when <var>n &gt; s.capacity()</var>. Returns <var>true</var> if capacity successfully increased when needed or if there is no need to increase capacity. Unconditionally returns <var>false</var> if capacity can not change over time.</td>
+<td>Post: <var>capacity()</var> is greater or equal to <var>n</var> if <var>capacity()</var> before call to this function was less than <var>n</var>. If container was not empty, then existing elements of the container must be retained. Otherwise, if <var>capacity()</var> prior to call to this function was less than or equal to <var>n</var>, then state of <var>s</var> is not modified.</td>
+<td></td>
+<td><var>return false;</var></td>
+</tr>
+<tr>
+<td><var>s.empty()</var></td>
+<td><var>bool</var></td>
+<td>Similar to <var>return static_cast&lt;std::size_t&gt;(s.size()) == 0;</var>.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td><var>return static_cast&lt;std::size_t&gt;(s.size()) == 0;</var></td>
+</tr>
+<tr>
+<td><var>s.full()</var></td>
+<td><var>bool</var></td>
+<td>Similar to <var>return static_cast&lt;std::size_t&gt;(s.size()) == s.capacity();</var>.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td><var>return static_cast&lt;std::size_t&gt;(s.size()) == s.capacity();</var></td>
+</tr>
+<tr>
+<td><var>s.size()</var></td>
+<td>An lvalue reference (constant reference for constant <var>s</var>) to type, which satisfies requirements from Table Y2. Operations on this type may not throw exceptions.</td>
+<td></td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.<br>Note: <var>s.size()</var> is used by contiguous_container to specify new size</td>
+<td>constant</td>
+<td></td>
+</tr>
+<tr>
+<td><var>s.max_size()</var></td>
+<td>Convertible to <var>std::size_t</var></td>
+<td>Must implement semantics for <var>max_size</var> from Table 80.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td><var>return std::numeric_limits&lt;std::size_t&gt;::max() / sizeof(T);</var></td>
+</tr>
+<tr>
+<td><var>s.capacity()</var></td>
+<td>Convertible to <var>std::size_t</var></td>
+<td>The total number of elements that the container can hold if capacity can not change over time.
+The total number of elements that the container can hold without calling <var>s.reserve()</var> if capacity can change over time.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>constant</td>
+<td></td>
+</tr>
+</tbody></table>
+</p>
+
+<p>
+In the following Table, <var>sz</var> denotes an lvalue of type, returned from <var>s.size()</var>.
+</p>
+<p>Table Y2 - Requirements for type, returned from s.size()</p>
+<p>
+<table border="1"><thead>
+<tr>
+<th>Expression</th>
+<th>Return type</th>
+<th>Operational semantics</th>
+<th>Assertion/note pre-/post-condition</th>
+<th>Complexity</th>
+</tr>
+</thead><tbody>
+<tr>
+<td><var>static_cast&lt;std::size_t&gt;(sz)</var></td>
+<td><var>std::size_t</var></td>
+<td>Returns size of the sequence.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.<br> Works for both constant <var>sz</var> and non-constant <var>sz</var>.</td>
+<td>constant</td>
+</tr>
+<tr>
+<td><var>(void)++sz</var></td>
+<td>(not used)</td>
+<td>Increments size of the sequence.</td>
+<td>May not throw any exceptions.</td>
+<td>constant</td>
+</tr>
+<tr>
+<td><var>(void)--sz</var></td>
+<td>(not used)</td>
+<td>Decrements size of the sequence.</td>
+<td>May not throw any exceptions.</td>
+<td>constant</td>
+</tr>
+<tr>
+<td><var>sz = n</var></td>
+<td>(not used)</td>
+<td>Sets size of the sequence.</td>
+<td>May not throw any exceptions.</td>
+<td>constant</td>
+</tr>
+<tr>
+<td><var>sz += n</var></td>
+<td>(not used)</td>
+<td>Increases size of the sequence by n.</td>
+<td>May not throw any exceptions.</td>
+<td>constant</td>
+</tr>
+<tr>
+<td><var>sz -= n</var></td>
+<td>(not used)</td>
+<td>Decreases size of the sequence by n.</td>
+<td>May not throw any exceptions.</td>
+<td>constant</td>
+</tr>
+</tbody></table>
+</p>
+
+<h4>23.3.y.2 Storage traits</h4>
+<p>
+The class template <var>storage_traits</var> supplies a uniform interface to all <var>Storage</var> types. A <var>Storage</var> cannot be a non-class type, however, even if <var>storage_traits</var> supplies the entire required interface.
+</p>
+
+<pre><code>
+namespace std {
+  template &lt;typename Storage&gt;
+  struct storage_traits
+  {
+    // types:
+    using no_exceptions = <em>see below</em>;
+
+    using storage_type = Storage;
+    using value_type = typename Storage::value_type;
+
+    using pointer = value_type*;
+    using const_pointer = const value_type*;
+
+    // construct/destroy:
+    template &lt;typename... Args&gt;
+    static constexpr pointer construct_at(storage_type&amp; storage, pointer location, Args&amp;&amp;... args);
+    static constexpr void destroy_at(storage_type&amp; storage, pointer location) noexcept;
+
+    // iterators:
+    static constexpr pointer       begin(storage_type&amp; storage)       noexcept;
+    static constexpr const_pointer begin(const storage_type&amp; storage) noexcept;
+
+    static constexpr pointer       end(storage_type&amp; storage)       noexcept;
+    static constexpr const_pointer end(const storage_type&amp; storage) noexcept;
+
+    // capacity:
+    static constexpr bool reserve(storage_type&amp; storage, std::size_t n);
+    static constexpr bool empty(const storage_type&amp; storage) noexcept;
+    static constexpr bool full (const storage_type&amp; storage) noexcept;
+
+    static constexpr auto&amp; size(storage_type&amp; storage)       -&gt; decltype(storage.size()) noexcept;
+    static constexpr auto&amp; size(const storage_type&amp; storage) -&gt; decltype(storage.size()) noexcept;
+
+    static constexpr std::size_t max_size(const storage_type&amp; storage) noexcept;
+    static constexpr std::size_t capacity(const storage_type&amp; storage) noexcept;
+  };
+}
+</code></pre>
+
+<h5>23.3.y.2.1 - Storage traits member types</h5>
+<p>
+<var>using no_exceptions = <em>see below</em>;</var>
+</p>
+<div id="indent">
+        <em>Type:</em> <var>typename Storage::no_exceptions</var> if <var>Storage::no_exceptions</var> is valid and denotes a type (14.8.2); otherwise, <var>std::false_type</var>.
+</div>
+
+<h5>23.3.y.2.2 - Storage traits static member functions</h5>
+<p>
+<var>template &lt;typename... Args&gt;<br>static constexpr pointer construct_at(storage_type&amp; storage, pointer location, Args&amp;&amp;... args);</var>
+</p>
+<div id="indent">
+<em>Effects:</em> Calls <var>storage.construct_at(location, std::forward&lt;Args&gt;(args)...)</var> if that call is well-formed;<br>
+otherwise, invokes <var>::new (static_cast&lt;void*&gt;(location)) value_type{std::forward&lt;Args&gt;(args)...}</var>.<br>
+<em>Returns:</em> <var>location</var>
+</div>
+
+<p>
+<var>static constexpr void destroy_at(storage_type&amp; storage, pointer location) noexcept;</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Calls <var>storage.destroy_at(location)</var> if that call is well-formed;<br>otherwise, equivalent to:<br>
+        <var>&nbsp;&nbsp;if constexpr(!std::is_trivially_destructible_v&lt;value_type&gt;)<br>&nbsp;&nbsp;&nbsp;&nbsp;location-&gt;~value_type();</var>
+</div>
+
+<p>
+<var>
+static constexpr pointer       begin(storage_type&amp; storage)       noexcept;<br>
+static constexpr const_pointer begin(const storage_type&amp; storage) noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.begin();</var>
+</div>
+
+<p>
+<var>
+static constexpr pointer       end(storage_type&amp; storage)       noexcept;<br>
+static constexpr const_pointer end(const storage_type&amp; storage) noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.end();</var><br> if that is well-formed;
+        otherwise, equivalent to:<br> <var>&nbsp;&nbsp;return storage.begin() + static_cast&lt;std::size_t&gt;(storage.size());</var>
+</div>
+
+<p>
+<var>static constexpr bool reserve(storage_type&amp; storage, std::size_t n);</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.reserve(n);</var><br> if that is well-formed; otherwise, equivalent to:<br> <var>&nbsp;&nbsp;return false;</var>
+</div>
+
+<p>
+<var>static constexpr bool empty(const storage_type&amp; storage) noexcept;</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.empty();</var><br> if that is well-formed;
+        otherwise, equivalent to:<br> <var>&nbsp;&nbsp;return static_cast&lt;std::size_t&gt;(storage.size()) == 0;</var>
+</div>
+
+<p>
+<var>static constexpr bool full (const storage_type&amp; storage) noexcept;</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.full();</var><br> if that is well-formed; otherwise, equivalent to:<br>
+        <var>&nbsp;&nbsp;return static_cast&lt;std::size_t&gt;(storage.size()) == storage.capacity();</var>
+</div>
+
+<p>
+<var>
+static constexpr auto&amp; size(storage_type&amp; storage)       -&gt; decltype(storage.size()) noexcept;<br>
+static constexpr auto&amp; size(const storage_type&amp; storage) -&gt; decltype(storage.size()) noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return storage.size();</var>
+</div>
+
+<p>
+<var>static constexpr std::size_t max_size(const storage_type&amp; storage) noexcept;</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return static_cast&lt;std::size_t&gt;(storage.max_size());</var><br> if that is well-formed;
+        otherwise equivalent to:<br> <var>&nbsp;&nbsp;return std::numeric_limits&lt;std::size_t&gt;::max() / sizeof(value_type);</var>
+</div>
+
+<p>
+<var>
+static constexpr std::size_t capacity(const storage_type&amp; storage) noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return static_cast&lt;std::size_t&gt;(storage.capacity());</var>
+</div>
+
+<h4>23.3.y.3 Class template contiguous_container overview</h4>
+<p>A <var>contiguous_container</var> is a sequence container that supports (amortized) constant time insert and erase operations at the
+end; insert and erase in the middle take linear time. Storage management is handled solely through its <var>Storage</var> base class interface, with
+requirements specified in Table Y1. An implementation shall not define any non-static data members and any non-const static members in <var>contiguous_container</var>.
+</p>
+
+<p>
+This container satisfies most of the requirements of a container, all of the requirements of a reversible container (given in two tables in 23.2),
+most of the requirements of a sequence container, including most of the optional sequence container requirements (23.2.3). In order for its specialization to fully
+satisfy a container and/or allocator-aware container requirements, template parameter <var>Storage</var> should provide missing functionality: constructors, destructor, <var>swap</var>, etc. Functions <var>emplace_back</var> and <var>push_back</var> return iterator to inserted element instead of <var>reference</var> and <var>void</var>. Functions <var>assign</var> and <var>reserve</var> (if defined in <var>Storage</var>) return <var>bool</var> instead of <var>void</var>.
+</p>
+
+<p>
+[ <em>Note:</em> <var>contiguous_container</var> has implicitly-declared destructor, so by default <var>clear</var> is not invoked at the end of container's lifetime. <em>-- end note</em> ]
+</p>
+
+<p>Descriptions are provided here only for operations on contiguous_container that are not described in one of these tables or for operations where there is additional semantic information.</p>
+
+<pre><code>
+namespace std {
+  template &lt;typename Storage&gt;
+  struct contiguous_container : Storage
+  {
+    // traits:
+    using traits = storage_traits&lt;Storage&gt;;
+
+    // types:
+    using value_type             = typename Storage::value_type;
+    using pointer                = value_type*;
+    using const_pointer          = const value_type*;
+    using reference              = value_type&amp;;
+    using const_reference        = const value_type&amp;;
+    using size_type              = std::size_t;
+    using difference_type        = std::ptrdiff_t;
+    using iterator               = pointer;
+    using const_iterator         = const_pointer;
+    using reverse_iterator       = std::reverse_iterator&lt;iterator&gt;;
+    using const_reverse_iterator = std::reverse_iterator&lt;const_iterator&gt;;
+
+    // 23.3.y.4, construct/copy/destroy:
+    using Storage::Storage;
+    constexpr contiguous_container&amp; operator=(std::initializer_list&lt;value_type&gt; il);
+
+    template &lt;typename ForwardIterator&gt;
+    constexpr bool assign(ForwardIterator first, ForwardIterator last);
+    constexpr bool assign(std::initializer_list&lt;value_type&gt; il);
+    constexpr bool assign(size_type n, const_reference u);
+
+    // 23.3.y.5, iterators:
+    constexpr iterator               begin()  noexcept;
+    constexpr const_iterator         begin()  const noexcept;
+    constexpr iterator               end()    noexcept;
+    constexpr const_iterator         end()    const noexcept;
+    constexpr reverse_iterator       rbegin() noexcept;
+    constexpr const_reverse_iterator rbegin() const noexcept;
+    constexpr reverse_iterator       rend()   noexcept;
+    constexpr const_reverse_iterator rend()   const noexcept;
+
+    constexpr const_iterator         cbegin()  const noexcept;
+    constexpr const_iterator         cend()    const noexcept;
+    constexpr const_reverse_iterator crbegin() const noexcept;
+    constexpr const_reverse_iterator crend()   const noexcept;
+
+    // 23.3.y.6, capacity:
+    constexpr bool empty() const noexcept;
+    constexpr bool full()  const noexcept;
+    constexpr size_type size()     const noexcept;
+    constexpr size_type max_size() const noexcept;
+    constexpr size_type capacity() const noexcept;
+
+    // element access:
+    constexpr reference       operator[](size_type i) noexcept;
+    constexpr const_reference operator[](size_type i) const noexcept;
+    constexpr reference       at(size_type i);
+    constexpr const_reference at(size_type i) const;
+    constexpr reference       front() noexcept;
+    constexpr const_reference front() const noexcept;
+    constexpr reference       back() noexcept;
+    constexpr const_reference back() const noexcept;
+
+    // 23.3.y.7, data access:
+    constexpr pointer       data() noexcept;
+    constexpr const_pointer data() const noexcept;
+
+    // 23.3.y.8 modifiers:
+    template &lt;typename... Args&gt;
+    constexpr iterator emplace_back(Args&amp;&amp;... args);
+    constexpr iterator push_back(const_reference x);
+    constexpr iterator push_back(value_type&amp;&amp; x);
+    constexpr void pop_back() noexcept;
+
+    template &lt;typename... Args&gt;
+    constexpr iterator emplace(const_iterator position, Args&amp;&amp;... args);
+
+    constexpr iterator insert(const_iterator position, const_reference x);
+    constexpr iterator insert(const_iterator position, value_type&amp;&amp; x);
+
+    template &lt;typename ForwardIterator&gt;
+    constexpr iterator insert(const_iterator position, ForwardIterator first, ForwardIterator last);
+    constexpr iterator insert(const_iterator position, std::initializer_list&lt;value_type&gt; il);
+    constexpr iterator insert(const_iterator position, size_type n, const_reference x);
+
+    constexpr iterator erase(const_iterator position);
+    constexpr iterator erase(const_iterator first, const_iterator last);
+    constexpr void clear() noexcept;
+  };
+
+  template &lt;typename Storage&gt;
+  constexpr bool operator==(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator!=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&lt;(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                           const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&gt;(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                           const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&lt;=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+  template &lt;typename Storage&gt;
+  constexpr bool operator&gt;=(const contiguous_container&lt;Storage&gt;&amp; lhs,
+                            const contiguous_container&lt;Storage&gt;&amp; rhs);
+
+  // 23.3.y.9, specialized algorithms:
+  template &lt;typename Storage&gt;
+  constexpr void swap(contiguous_container&lt;Storage&gt;&amp; lhs,
+                      contiguous_container&lt;Storage&gt;&amp; rhs)
+          noexcept(noexcept(lhs.swap(rhs)));
+}
+</code></pre>
+
+<p>
+All member functions, which might <em>require increase in capacity</em>, do so by the code, equivalent to the following:
+</p>
+
+<div id="indent">
+<pre><code>if(!traits::reserve(*this, n))
+{
+        if constexpr (traits::no_exceptions::value)
+                return <em>see below</em>;
+        else
+                throw std::runtime_error(<em>unspecified</em>);
+}
+</pre></code>
+</div>
+
+<p>Here <var>n</var> denotes a value of type <var>std::size_t</var>. Actual value of <var>n</var> depends on the function, which requires increase in capacity. For <var>assign</var>, <var>n</var> equals to the number of elements, which are assigned to container. For functions, which add single element to the container, <var>n</var> equals to <var>capacity() + 1</var>. For functions, which insert multiple elements, <var>n</var> equals to <var>size() + <em>number of elements to be inserted</em></var>. The form of return statement depends on the function. If function is <var>assign</var>, then this code uses <var>return false;</var>. Otherwise, this code uses <var>return end();</var>.</p>
+
+<p>
+[ <em>Note:</em> Memory layout and whether or not this container dynamically allocates storage is completely defined by its template parameter. This container is intended to be used in embedded development. <em>-- end note</em> ]
+</p>
+
+<p>
+For the sake of defining semantics of container operations, the following invented exposition-only member function is used:<br>
+<var>constexpr void destroy_range(iterator first, iterator last) noexcept</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Invokes <var>traits::destroy_at(*this, p)</var> for each <var>p</var> in range <var>[ first, last )</var>.
+</div>
+
+<h4>23.3.y.4 contiguous_container constructors, copy, assignment</h4>
+<p>
+<var>
+        constexpr contiguous_container&amp; operator=(std::initializer_list&lt;value_type&gt; il);
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;assign(il);<br>&nbsp;&nbsp;return *this;</var>
+</div>
+
+<p>
+<var>
+        template &lt;typename ForwardIterator&gt;<br>
+        constexpr bool assign(ForwardIterator first, ForwardIterator last);<br>
+        constexpr bool assign(std::initializer_list&lt;value_type&gt; il);<br>
+        constexpr bool assign(size_type n, const_reference u);<br>
+</var>
+</p>
+<div id="indent">
+        <p>
+        <em>Remarks:</em> Before any assignment happens, checks if container has sufficient capacity to hold number of assigned elements, and If not, <em>requires increase in capacity</em>.
+        </p>
+        <p>
+        <em>Throws:</em> Nothing unless <var>traits::reserve</var>, <var>traits::construct_at</var>, assignment operator of <var>value_type</var> or <var>ForwardIterator</var> operation throws an exception.
+        </p>
+        <p>
+        <em>Returns:</em> <var>false</var> if <var>traits::no_exceptions::value</var> is <var>true</var> and <var>traits::reserve</var> returns <var>false</var>. Otherwise, returns <var>true</var>.
+        </p>
+</div>
+
+
+<h4>23.3.y.5 contiguous_container iterators</h4>
+<p>
+<var>
+        constexpr iterator               begin()  noexcept;<br>
+        constexpr const_iterator         begin()  const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::begin(*this);</var>
+</div>
+
+<p>
+<var>
+        constexpr iterator               end()    noexcept;<br>
+        constexpr const_iterator         end()    const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::end(*this);</var>
+</div>
+
+<h4>23.3.y.6 contiguous_container capacity</h4>
+<p>
+<var>
+        constexpr bool empty() const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::empty(*this);</var>
+</div>
+
+<p>
+<var>
+        constexpr bool full()  const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::full(*this);</var>
+</div>
+
+<p>
+<var>
+        constexpr size_type size()     const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return static_cast&lt;size_type&gt;(traits::size(*this));</var>
+</div>
+
+<p>
+<var>
+        constexpr size_type max_size() const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::max_size(*this);</var>
+</div>
+
+<p>
+<var>
+        constexpr size_type capacity() const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::capacity(*this);</var>
+</div>
+
+<h4>23.3.y.7 contiguous_container data</h4>
+<p>
+<var>
+        constexpr pointer       data() noexcept;<br>
+        constexpr const_pointer data() const noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return traits::begin(*this);</var>
+</div>
+
+<h4>23.3.y.8 contiguous_container modifiers</h4>
+<p>
+<var>
+        template &lt;typename... Args&gt;<br>
+        constexpr iterator emplace_back(Args&amp;&amp;... args);
+</var>
+</p>
+<div id="indent">
+        <p>
+        <em>Remarks:</em> Before adding new element, checks if container has sufficient capacity to hold one more, and if not, <em>requires increase in capacity</em>.
+        </p>
+
+        <p>
+        <em>Effects:</em> Equivalent to:<br>
+        <var>
+                &nbsp;&nbsp;auto position = traits::construct_at(*this, end(), std::forward&lt;Args&gt;(args)...);<br>
+                &nbsp;&nbsp;return (void)++traits::size(*this), position;
+        </var>
+        </p>
+
+        <p>
+        [ <em>Note:</em> It is implied that this function returns <var>end()</var> if and only if <var>traits::no_exceptions::value</var> is <var>true</var> and <var>traits::reserve</var> returns <var>false</var>. <em>-- end note</em> ]<br>
+        [ <em>Note:</em> Only <var>traits::reserve</var> and <var>traits::construct_at</var> may throw exceptions. When exception is thrown, whether or not there are any effects depends on implementation of aforementioned functions. Using defaults for <var>reserve</var> and <var>construct_at</var> implies that this function has no effects when exception is thrown. -- <em>end note</em> ]<br>
+        [ <em>Note:</em> It is also implied that if adding new element succeeds, past-the-end iterator is invalidated, but iterators and references before the insertion point remain valid if <var>traits::reserve</var> was not called. <em>-- end note</em> ]
+        </p>
+</div>
+
+<p>
+<var>
+        constexpr iterator push_back(const_reference x);
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return emplace_back(x);</var>
+</div>
+
+<p>
+<var>
+        constexpr iterator push_back(value_type&amp;&amp; x);
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;return emplace_back(std::move(x));</var>
+</div>
+
+<p>
+<var>
+        constexpr void pop_back() noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br> <var>&nbsp;&nbsp;(void)--traits::size(*this), traits::destroy_at(*this, end());</var>
+</div>
+
+<p>
+<var>
+        template &lt;typename... Args&gt;<br>
+        constexpr iterator emplace(const_iterator position, Args&amp;&amp;... args);<br>
+        constexpr iterator insert(const_iterator position, const_reference x);<br>
+        constexpr iterator insert(const_iterator position, value_type&amp;&amp; x);<br><br>
+
+        template &lt;typename ForwardIterator&gt;<br>
+        constexpr iterator insert(const_iterator position, ForwardIterator first, ForwardIterator last);<br>
+        constexpr iterator insert(const_iterator position, std::initializer_list&lt;value_type&gt; il);<br>
+        constexpr iterator insert(const_iterator position, size_type n, const_reference x);<br>
+</var>
+</p>
+<div id="indent">
+        <p>
+        <em>Remarks:</em>  If insertion is done for single element at the end, then effects are similar to that of <var>emplace_back</var> function invoked with appropriate arguments. Otherwise, before adding elements, checks if container has sufficient capacity to hold them, and if not, <em>requires increase in capacity</em>. If <var>traits::reserve</var> was not called, then all the iterators and references before the insertion point remain valid. Elements in the uninitialized storage are constructed as if by <var>traits::construct_at</var>.
+        </p>
+
+        <p>
+        <em>Complexity:</em> The complexity is linear in the number of elements inserted plus the distance to the end of the vector.
+        </p>
+</div>
+
+<p>
+<var>
+        constexpr iterator erase(const_iterator position);<br>
+        constexpr iterator erase(const_iterator first, const_iterator last);
+</var>
+</p>
+<div id="indent">
+        <p>
+        <em>Effects:</em><br>
+        Let <var>p</var> be an <var>iterator</var>, which points to the same element as <var>position</var> or <var>first</var>.<br>
+        Let <var>n</var> be a value of type <var>size_type</var>, which equals to <var>1</var> for the first function and to <var>static_cast&lt;size_type&gt;(last - first)</var> for the second.<br>
+        Then effects are equivalent to:<br>
+        <var>
+                &nbsp;&nbsp;if(n != 0)<br>
+                &nbsp;&nbsp;{<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;destroy_range(std::move(p + n, end(), p), end());<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;traits::size(*this) -= n;<br>
+                &nbsp;&nbsp;}<br>
+
+                &nbsp;&nbsp;return p;<br>
+        </var>
+
+        </p>
+
+        <p>
+        [ <em>Note:</em> <var>traits::destroy_at</var> is called the number of times equal to the number of the elements erased, but the move assignment operator of <var>value_type</var> is called the number of times equal to the number of elements in the container after the erased elements. <em> -- end note</em> ]<br>
+        [ <em>Note:</em> Throws nothing unless an exception is thrown by the move assignment operator of <var>value_type</var>. <em>-- end note</em> ]
+        </p>
+</div>
+
+<p>
+<var>
+        constexpr void clear() noexcept;
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to:<br>
+        <var>
+                &nbsp;&nbsp;destroy_range(begin(), end());<br>
+                &nbsp;&nbsp;traits::size(*this) = 0;
+        </var>
+</div>
+
+<h4>23.3.y.9 contiguous_container specialized algorithms</h4>
+<p>
+<var>
+template &lt;typename Storage&gt;<br>
+constexpr void swap(contiguous_container&lt;Storage&gt;&amp; lhs,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;contiguous_container&lt;Storage&gt;&amp; rhs)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;noexcept(noexcept(lhs.swap(rhs)));
+</var>
+</p>
+<div id="indent">
+        <em>Effects:</em> Equivalent to: <var>lhs.swap(rhs);</var>
+</div>
+
+<h2>Revision History</h2>
+
+<p>
+R0:
+</p>
+<div id="indent">
+        Initial revision
+</div>
+
+
+</body>
+</html>
