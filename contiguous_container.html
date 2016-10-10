@@ -327,7 +327,7 @@ In the following Table <var>S</var> denotes a template parameter of <var>contigu
 <tr>
 <td><var>s.begin()</var></td>
 <td><var>T*, const T*</var> for constant <var>s</var></td>
-<td>Returns a pointer <var>p</var> such that <var>[p, p + s.capacity() )</var> is a valid range.</td>
+<td>Returns a pointer <var>p</var> such that <var>[p, p + static_cast&lt;std::size_t&gt;(s.capacity()) )</var> is a valid range.</td>
 <td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
 <td>constant</td>
 <td></td>
