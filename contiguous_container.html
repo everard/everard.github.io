@@ -327,7 +327,7 @@ In the following Table <var>S</var> denotes a template parameter of <var>contigu
 <tr>
 <td><var>s.begin()</var></td>
 <td><var>T*, const T*</var> for constant <var>s</var></td>
-<td>Returns a pointer <var>p</var> such that <var>[p, p + static_cast&lt;std::size_t&gt;(s.size()) )</var> is a valid range.</td>
+<td>Returns a pointer <var>p</var> such that <var>[p, p + s.capacity() )</var> is a valid range.</td>
 <td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
 <td>constant</td>
 <td></td>
@@ -385,7 +385,8 @@ In the following Table <var>S</var> denotes a template parameter of <var>contigu
 <td>Convertible to <var>std::size_t</var></td>
 <td>The total number of elements that the container can hold if capacity can not change over time.
 The total number of elements that the container can hold without calling <var>s.reserve()</var> if capacity can change over time.</td>
-<td>May not throw any exceptions. May not modify state of <var>s</var>.</td>
+<td>May not throw any exceptions. May not modify state of <var>s</var>.<br>
+<var>s.capacty() &gt;= static_cast&lt;std::size_t&gt;(s.size())</var></td>
 <td>constant</td>
 <td></td>
 </tr>
